@@ -13,7 +13,9 @@ const app = express();
 const port = 3002;
 
 app.get("/", (req: any, res: any) => {
-  res.send(`Hello World! My address is ${myAddress}`);
+  res.send(
+    `Hello World! My address is ${myAddress}, my mock address is ${process.env.CONTRACT_ADDRESS}}`
+  );
 });
 
 app.listen(port, () => {
