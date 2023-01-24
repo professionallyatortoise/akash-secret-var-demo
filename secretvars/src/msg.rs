@@ -1,16 +1,21 @@
+use cosmwasm_std::Binary;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, JsonSchema)]
 pub struct InstantiateMsg {
+    pub prng_seed: Binary,
     pub count: i32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecuteMsg {
+    SetViewers { viewers: Vec<String> },
     Increment {},
     Reset { count: i32 },
+    SetSecreteVariables { secret_variables: String },
+    GenerateViewingKey { entropy: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, JsonSchema)]
@@ -18,6 +23,10 @@ pub enum ExecuteMsg {
 pub enum QueryMsg {
     // GetCount returns the current count as a json-encoded number
     GetCount {},
+    GetSecretVariables {
+        account: String,
+        viewing_key: String,
+    },
 }
 
 // We define a custom struct for each query response
