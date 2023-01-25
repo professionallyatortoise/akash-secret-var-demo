@@ -5,16 +5,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, JsonSchema)]
 pub struct InstantiateMsg {
     pub prng_seed: Binary,
-    pub count: i32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecuteMsg {
     SetViewers { viewers: Vec<String> },
-    Increment {},
-    Reset { count: i32 },
-    SetSecreteVariables { secret_variables: String },
+    SetSecretVariables { secret_variables: String },
     GenerateViewingKey { entropy: String },
 }
 
@@ -22,7 +19,6 @@ pub enum ExecuteMsg {
 #[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
     // GetCount returns the current count as a json-encoded number
-    GetCount {},
     GetSecretVariables {
         account: String,
         viewing_key: String,
@@ -33,4 +29,9 @@ pub enum QueryMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, JsonSchema)]
 pub struct CountResponse {
     pub count: i32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, JsonSchema)]
+pub enum ExecuteAnswer {
+    ViewingKeyResponse { key: String },
 }

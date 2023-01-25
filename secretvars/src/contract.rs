@@ -3,9 +3,9 @@ use cosmwasm_std::{
     StdError, StdResult,
 };
 
-use crate::msg::{CountResponse, ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::msg::ExecuteAnswer::ViewingKeyResponse;
+use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 use crate::state::{config, config_read, State};
-
 use secret_toolkit::viewing_key::{ViewingKey, ViewingKeyStore};
 use secret_toolkit_crypto::sha_256;
 
@@ -17,7 +17,6 @@ pub fn instantiate(
     msg: InstantiateMsg,
 ) -> StdResult<Response> {
     let state = State {
-        count: msg.count,
         owner: deps.api.addr_canonicalize(info.sender.as_str())?,
         allowed_viewers: vec![],
         secret_variables: "".to_string(),
@@ -37,9 +36,7 @@ pub fn instantiate(
 pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: ExecuteMsg) -> StdResult<Response> {
     match msg {
         ExecuteMsg::SetViewers { viewers } => try_set_viewers(deps, info, viewers),
-        ExecuteMsg::Increment {} => try_increment(deps, env),
-        ExecuteMsg::Reset { count } => try_reset(deps, info, count),
-        ExecuteMsg::SetSecreteVariables { secret_variables } => {
+        ExecuteMsg::SetSecretVariables { secret_variables } => {
             try_set_secret_variables(deps, info, secret_variables)
         }
         ExecuteMsg::GenerateViewingKey { entropy } => {
@@ -71,7 +68,7 @@ pub fn try_generate_viewing_key(
         entropy.as_ref(),
     );
 
-    Ok(Response::new().set_data(to_binary(key.as_bytes())?))
+    Ok(Response::new().set_data(to_binary(&ViewingKeyResponse { key })?))
 }
 
 pub fn try_set_secret_variables(
@@ -122,34 +119,9 @@ pub fn try_set_viewers(
     Ok(Response::default())
 }
 
-pub fn try_increment(deps: DepsMut, _env: Env) -> StdResult<Response> {
-    config(deps.storage).update(|mut state| -> Result<_, StdError> {
-        state.count += 1;
-        Ok(state)
-    })?;
-
-    deps.api.debug("count incremented successfully");
-    Ok(Response::default())
-}
-
-pub fn try_reset(deps: DepsMut, info: MessageInfo, count: i32) -> StdResult<Response> {
-    let sender_address_raw = deps.api.addr_canonicalize(info.sender.as_str())?;
-    config(deps.storage).update(|mut state| {
-        if sender_address_raw != state.owner {
-            return Err(StdError::generic_err("Only the owner can reset count"));
-        }
-        state.count = count;
-        Ok(state)
-    })?;
-
-    deps.api.debug("count reset successfully");
-    Ok(Response::default())
-}
-
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::GetCount {} => to_binary(&query_count(deps)?),
         QueryMsg::GetSecretVariables {
             viewing_key,
             account,
@@ -170,133 +142,153 @@ fn query_secret_variables(deps: Deps, viewing_key: String, account: String) -> S
     Ok(state.secret_variables)
 }
 
-fn query_count(deps: Deps) -> StdResult<CountResponse> {
-    let state = config_read(deps.storage).load()?;
-    Ok(CountResponse { count: state.count })
-}
-
 #[cfg(test)]
 mod tests {
+
     use super::*;
+    use crate::msg::ExecuteAnswer;
     use cosmwasm_std::testing::*;
-    use cosmwasm_std::{from_binary, Coin, StdError, Uint128};
+    use cosmwasm_std::{from_binary, Coin, Uint128};
 
     #[test]
     fn proper_initialization() {
         let mut deps = mock_dependencies();
-        let info = mock_info(
-            "creator",
-            &[Coin {
-                denom: "earth".to_string(),
-                amount: Uint128::new(1000),
-            }],
-        );
+        let info = mock_info("creator", &[]);
         let init_msg = InstantiateMsg {
-            count: 17,
             prng_seed: b"prng_seed".to_vec().into(),
         };
 
         // we can just call .unwrap() to assert this was a success
         let res = instantiate(deps.as_mut(), mock_env(), info, init_msg).unwrap();
 
-        assert_eq!(0, res.messages.len());
-
-        // it worked, let's query the state
-        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-        let value: CountResponse = from_binary(&res).unwrap();
-        assert_eq!(17, value.count);
+        assert_eq!(0, res.messages.len())
     }
 
     #[test]
-    fn increment() {
+    fn set_viewers() {
         let mut deps = mock_dependencies_with_balance(&[Coin {
             denom: "token".to_string(),
             amount: Uint128::new(2),
         }]);
-        let info = mock_info(
-            "creator",
-            &[Coin {
-                denom: "token".to_string(),
-                amount: Uint128::new(2),
-            }],
-        );
+        let info = mock_info("creator", &[]);
         let init_msg = InstantiateMsg {
-            count: 17,
             prng_seed: b"prng_seed".to_vec().into(),
         };
 
         let _res = instantiate(deps.as_mut(), mock_env(), info, init_msg).unwrap();
 
-        // anyone can increment
-        let info = mock_info(
-            "anyone",
-            &[Coin {
-                denom: "token".to_string(),
-                amount: Uint128::new(2),
-            }],
-        );
+        let info = mock_info("creator", &[]);
 
-        let exec_msg = ExecuteMsg::Increment {};
+        let exec_msg = ExecuteMsg::SetViewers {
+            viewers: vec!["viewer1".to_string(), "viewer2".to_string()],
+        };
         let _res = execute(deps.as_mut(), mock_env(), info, exec_msg).unwrap();
 
-        // should increase counter by 1
-        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-        let value: CountResponse = from_binary(&res).unwrap();
-        assert_eq!(18, value.count);
+        let info = mock_info("anyone", &[]);
+
+        let exec_msg = ExecuteMsg::SetViewers {
+            viewers: vec!["viewer1".to_string(), "viewer2".to_string()],
+        };
+        execute(deps.as_mut(), mock_env(), info, exec_msg).expect_err("Anyone cannot set viewers");
     }
 
     #[test]
-    fn reset() {
+    fn proper_generate_vk() {
         let mut deps = mock_dependencies_with_balance(&[Coin {
             denom: "token".to_string(),
             amount: Uint128::new(2),
         }]);
-        let info = mock_info(
-            "creator",
-            &[Coin {
-                denom: "token".to_string(),
-                amount: Uint128::new(2),
-            }],
-        );
+        let info = mock_info("creator", &[]);
         let init_msg = InstantiateMsg {
-            count: 17,
             prng_seed: b"prng_seed".to_vec().into(),
         };
 
         let _res = instantiate(deps.as_mut(), mock_env(), info, init_msg).unwrap();
 
-        // not anyone can reset
-        let info = mock_info(
-            "anyone",
-            &[Coin {
-                denom: "token".to_string(),
-                amount: Uint128::new(2),
-            }],
-        );
-        let exec_msg = ExecuteMsg::Reset { count: 5 };
+        let info = mock_info("creator", &[]);
 
-        let res = execute(deps.as_mut(), mock_env(), info, exec_msg);
+        let exec_msg = ExecuteMsg::SetViewers {
+            viewers: vec!["viewer1".to_string()],
+        };
+        let _res = execute(deps.as_mut(), mock_env(), info, exec_msg).unwrap();
 
-        match res {
-            Err(StdError::GenericErr { .. }) => {}
-            _ => panic!("Must return unauthorized error"),
-        }
+        let info = mock_info("viewer1", &[]);
 
-        // only the original creator can reset the counter
-        let info = mock_info(
-            "creator",
-            &[Coin {
-                denom: "token".to_string(),
-                amount: Uint128::new(2),
-            }],
-        );
-        let exec_msg = ExecuteMsg::Reset { count: 5 };
+        let exec_msg = ExecuteMsg::GenerateViewingKey {
+            entropy: "entropy".to_string(),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info, exec_msg).unwrap();
+
+        let _key: ExecuteAnswer = from_binary(&res.data.unwrap_or_default()).unwrap();
+
+        let info = mock_info("hacker", &[]);
+
+        let exec_msg = ExecuteMsg::GenerateViewingKey {
+            entropy: "entropy".to_string(),
+        };
+
+        let _res = execute(deps.as_mut(), mock_env(), info, exec_msg)
+            .expect_err("Hacker cannot generate viewing key");
+    }
+
+    #[test]
+    fn proper_workflow() {
+        let mut deps = mock_dependencies_with_balance(&[Coin {
+            denom: "token".to_string(),
+            amount: Uint128::new(2),
+        }]);
+        let info = mock_info("creator", &[]);
+        let init_msg = InstantiateMsg {
+            prng_seed: b"prng_seed".to_vec().into(),
+        };
+
+        let _res = instantiate(deps.as_mut(), mock_env(), info, init_msg).unwrap();
+
+        let info = mock_info("creator", &[]);
+
+        let exec_msg = ExecuteMsg::SetViewers {
+            viewers: vec!["viewer1".to_string()],
+        };
+        let _res = execute(deps.as_mut(), mock_env(), info, exec_msg).unwrap();
+
+        let exec_msg = ExecuteMsg::SetSecretVariables {
+            secret_variables: "this is a secret".to_string(),
+        };
+
+        let info = mock_info("creator", &[]);
 
         let _res = execute(deps.as_mut(), mock_env(), info, exec_msg).unwrap();
 
-        // should now be 5
-        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-        let value: CountResponse = from_binary(&res).unwrap();
-        assert_eq!(5, value.count);
+        let info = mock_info("viewer1", &[]);
+
+        let exec_msg = ExecuteMsg::GenerateViewingKey {
+            entropy: "entropy".to_string(),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info, exec_msg).unwrap();
+
+        let ans: ExecuteAnswer = from_binary(&res.data.unwrap_or_default()).unwrap();
+
+        let key = match ans {
+            ExecuteAnswer::ViewingKeyResponse { key } => key,
+        };
+
+        let exec_msg = QueryMsg::GetSecretVariables {
+            viewing_key: key,
+            account: "viewer1".to_string(),
+        };
+
+        let res = query(deps.as_ref(), mock_env(), exec_msg).unwrap();
+
+        let ans: String = from_binary(&res).unwrap();
+
+        assert_eq!(ans, "this is a secret".to_string());
+
+        let exec_msg = QueryMsg::GetSecretVariables {
+            viewing_key: "asda".to_string(),
+            account: "viewer1".to_string(),
+        };
+
+        let _res = query(deps.as_ref(), mock_env(), exec_msg)
+            .expect_err("Hacker cannot query secret variables");
     }
 }
